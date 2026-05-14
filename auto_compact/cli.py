@@ -14,6 +14,22 @@ from auto_compact.compact import compact_directory, compact_to_file, estimate_ou
 from auto_compact.tokens import TokenCounter
 
 
+def parse_include_patterns(raw: str) -> set:
+    """Parse comma-separated include patterns like '*.py,*.ts' into {'.py', '.ts'}."""
+    result = set()
+    for p in raw.split(','):
+        p = p.strip()
+        if not p:
+            continue
+        # Strip leading '*' if present (e.g. '*.py' -> '.py')
+        if p.startswith('*'):
+            p = p[1:]
+        if not p.startswith('.'):
+            p = '.' + p
+        result.add(p.lower())
+    return result
+
+
 def create_parser() -> argparse.ArgumentParser:
     """
     Create the argument parser for auto-compact CLI.
@@ -109,6 +125,12 @@ Config files:
         help='Suppress progress output',
     )
 
+    parser.add_argument(
+        '--include',
+        metavar='PATTERNS',
+        help='Only include files matching these extensions (comma-separated, e.g. "*.py,*.ts,*.md")',
+    )
+
     return parser
 
 
@@ -135,6 +157,11 @@ def main(args: Optional[list[str]] = None) -> int:
         print(f"Error: Path is not a directory: {base_path}", file=sys.stderr)
         return 1
 
+    # Mutual exclusion: --include and --config cannot be used together
+    if opts.include and opts.config:
+        print("Error: --include and --config cannot be used together", file=sys.stderr)
+        return 1
+
     # Show config mode
     if opts.show_config:
         patterns, config_files = get_effective_config(base_path, opts.config)
@@ -147,18 +174,27 @@ def main(args: Optional[list[str]] = None) -> int:
         print(patterns)
         return 0
 
-    # Load ignore patterns
-    try:
-        ignore_patterns = load_ignore_patterns(base_path, opts.config)
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    # Load ignore patterns (exclusion mode only)
+    if opts.include:
+        include_patterns = parse_include_patterns(opts.include)
+        if not include_patterns:
+            print("Error: --include requires at least one pattern", file=sys.stderr)
+            return 1
+        ignore_patterns = None
+    else:
+        include_patterns = None
+        try:
+            ignore_patterns = load_ignore_patterns(base_path, opts.config)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
 
     # Create file filter
     file_filter = FileFilter(
         ignore_patterns=ignore_patterns,
         include_hidden=opts.include_hidden,
         max_file_size=opts.max_size,
+        include_patterns=include_patterns,
     )
 
     # Estimate mode

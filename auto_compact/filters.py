@@ -154,6 +154,7 @@ class FileFilter:
         ignore_patterns: Optional[str] = None,
         include_hidden: bool = False,
         max_file_size: Optional[int] = None,
+        include_patterns: Optional[Set[str]] = None,
     ):
         """
         Initialize the file filter.
@@ -164,14 +165,23 @@ class FileFilter:
             include_hidden: Whether to include hidden files/directories.
             max_file_size: Maximum file size in bytes. Files larger than
                           this are excluded. None means no limit.
+            include_patterns: If set, ONLY files with these extensions are included.
+                             Exclusion logic is skipped entirely. None means
+                             exclusion mode is active.
         """
-        if ignore_patterns is None:
-            ignore_patterns = get_default_ignore_patterns()
+        self.include_patterns = include_patterns
 
-        self.spec = pathspec.PathSpec.from_lines(
-            pathspec.patterns.GitWildMatchPattern,
-            ignore_patterns.splitlines()
-        )
+        # In whitelist mode, skip ignore pattern parsing
+        if include_patterns is not None:
+            self.spec = None
+        else:
+            if ignore_patterns is None:
+                ignore_patterns = get_default_ignore_patterns()
+
+            self.spec = pathspec.PathSpec.from_lines(
+                pathspec.patterns.GitWildMatchPattern,
+                ignore_patterns.splitlines()
+            )
         self.include_hidden = include_hidden
         self.max_file_size = max_file_size
 
@@ -186,7 +196,11 @@ class FileFilter:
         Returns:
             True if the file should be ignored, False otherwise.
         """
-        # Get relative path for pattern matching
+        # Whitelist mode: skip file if extension not in include set
+        if self.include_patterns is not None:
+            return file_path.suffix.lower() not in self.include_patterns
+
+        # Exclusion mode: get relative path for pattern matching
         try:
             rel_path = file_path.relative_to(base_path)
         except ValueError:
